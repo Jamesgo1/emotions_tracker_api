@@ -48,11 +48,53 @@ exports.postGetUserDetails = (req, res) => {
     })
 }
 
+exports.getUserDetails = (req, res) => {
+    const {user_id} = req.params;
+    const getFields = [user_id];
+
+    const userDetailsSQL = `
+        SELECT
+            u.username
+          , u.password
+          , ud.first_name
+          , ud.last_name
+          , ud.postcode
+          , ud.country
+          , ud.email
+        FROM
+            user u
+                INNER JOIN user_details ud
+                           ON u.user_id = ud.user_id
+        WHERE
+            u.user_id = ?
+    `
+
+    conn.query(userDetailsSQL, getFields, (err, rows) => {
+        if (err) {
+            res.status(500);
+            res.json({
+                status: 'failure',
+                message: err
+            });
+        } else {
+            console.log(rows);
+            res.status(200)
+            res.json({
+                status: "success",
+                message: `User details retrieved`,
+                details: rows
+            });
+        }
+
+    });
+}
+;
+
 exports.getLoginAttempts = (req, res) => {
     const {user_id} = req.params;
-    const insertFields = [user_id];
+    const getFields = [user_id];
 
-    // Change this number for failure threshold
+    // Change this number for customised failure threshold
     const failureThreshold = 5;
 
     const failedLoginAttemptsSQL = `
@@ -65,7 +107,7 @@ exports.getLoginAttempts = (req, res) => {
           AND DATE(ulh.login_date_time) = DATE(SYSDATE())
           AND ulh.success_ind < 1
     `
-    conn.query(failedLoginAttemptsSQL, insertFields, (err, rows) => {
+    conn.query(failedLoginAttemptsSQL, getFields, (err, rows) => {
         if (err) {
             res.status(500);
             res.json({
@@ -75,14 +117,13 @@ exports.getLoginAttempts = (req, res) => {
         } else {
 
             const {total} = rows.at(0);
-            if(total > failureThreshold){
+            if (total > failureThreshold) {
                 res.status(429)
                 res.json({
                     status: "failure",
                     message: "Too many unsuccessful login attempts."
                 });
-            }
-            else{
+            } else {
                 res.status(200)
                 res.json({
                     status: "success",
@@ -257,10 +298,9 @@ COMMIT;
 
 exports.postCheckUniqueRegField = (req, res) => {
     console.log(req.body);
-    const {username, email} = req.body;
-    const fieldsToCheck = [username, email];
+    const {username} = req.body;
+    const fieldsToCheck = [username];
     console.log(username);
-    console.log(email);
 
     checkSQLQuery = `
         SELECT
@@ -271,7 +311,6 @@ exports.postCheckUniqueRegField = (req, res) => {
                            ON ud.user_id = u.user_id
         WHERE
              u.username = ?
-          OR ud.email = ?
                      AND ud.end_datetime IS NULL
         ;
 
@@ -292,7 +331,7 @@ exports.postCheckUniqueRegField = (req, res) => {
                 res.status(403);
                 res.json({
                     status: 'failure',
-                    message: `Username or email already in use. Please use different credentials`
+                    message: `Username already in use. Please use different credentials`
                 });
             } else {
                 res.status(200);
@@ -305,3 +344,144 @@ exports.postCheckUniqueRegField = (req, res) => {
         }
     })
 };
+
+exports.updateUserValue = (req, res) => {
+    console.log(req.body);
+    const {new_val, field_to_update, user_id} = req.body;
+    console.log(req.body);
+    const fieldsToUpdate = [new_val, user_id];
+
+    updateSQLQuery = `
+        UPDATE user u
+            INNER JOIN user_details ud
+            ON u.user_id = ud.user_id
+        SET
+            ${field_to_update} = ?
+        WHERE
+            u.user_id = ?
+    `
+    console.log("Fields to update")
+    console.log(fieldsToUpdate);
+    conn.query(updateSQLQuery, fieldsToUpdate, (err, rows) => {
+        if (err) {
+            res.status(500);
+            res.json({
+                status: 'failure',
+                message: err
+            });
+        } else {
+            res.status(200);
+            res.json({
+                status: 'success',
+                message: `User credentials successfully updated`,
+            });
+        }
+
+    })
+}
+
+
+exports.deleteUser = (req, res) => {
+    const {user_id} = req.params;
+    const idToDelete = [user_id];
+    console.log(idToDelete);
+
+    deleteSQLQuery = `
+        START TRANSACTION
+;
+
+SET @var_user_del_id = ?;
+
+DROP TABLE IF EXISTS emotion_score_deletes;
+
+DROP TABLE IF EXISTS score_sub_deletes;
+
+DROP TABLE IF EXISTS trigger_details_deletes;
+
+DROP TABLE IF EXISTS trigger_sub_deletes;
+
+
+CREATE TEMPORARY TABLE emotion_score_deletes
+SELECT esc.emotion_score_id FROM emotion_score esc
+INNER JOIN score_sub_link sl
+ON esc.emotion_score_id = sl.emotion_score_id
+INNER JOIN emotion_submission es
+ON es.emotion_submission_id = sl.emotion_submission_id
+WHERE es.user_id = @var_user_del_id
+;
+
+CREATE TEMPORARY TABLE score_sub_deletes
+SELECT sl.score_sub_id FROM score_sub_link sl
+INNER JOIN emotion_submission es
+ON es.emotion_submission_id = sl.emotion_submission_id
+WHERE es.user_id = @var_user_del_id
+;
+
+CREATE TEMPORARY TABLE trigger_details_deletes
+SELECT td.trigger_id FROM trigger_details td
+INNER JOIN trigger_sub_link tsl
+ON td.trigger_id = tsl.trigger_id
+INNER JOIN emotion_submission es
+ON es.emotion_submission_id = tsl.emotion_submission_id
+WHERE es.user_id = @var_user_del_id
+;
+
+CREATE TEMPORARY TABLE trigger_sub_deletes
+SELECT tsl.trigger_sub_id FROM trigger_sub_link tsl
+INNER JOIN emotion_submission es
+ON es.emotion_submission_id = tsl.emotion_submission_id
+WHERE es.user_id = @var_user_del_id
+;
+
+DELETE FROM user_details ud
+WHERE ud.user_id = @var_user_del_id
+;
+
+DELETE FROM user_login_hist ulh
+WHERE ulh.user_id = @var_user_del_id
+;
+
+
+DELETE FROM score_sub_link sl
+WHERE sl.score_sub_id IN (SELECT * FROM emotion_score_deletes)
+;
+
+DELETE FROM trigger_sub_link tsl
+WHERE tsl.trigger_sub_id IN (SELECT * FROM trigger_sub_deletes)
+;
+
+DELETE FROM emotion_submission es
+WHERE es.user_id = @var_user_del_id
+;
+
+DELETE FROM trigger_details td
+WHERE td.trigger_id IN (SELECT * FROM trigger_details_deletes)
+;
+
+DELETE FROM emotion_score es
+WHERE es.emotion_score_id IN (SELECT * FROM emotion_score_deletes)
+;
+
+DELETE FROM user u
+WHERE u.user_id = @var_user_del_id
+;
+
+COMMIT;
+    `
+    conn.query(deleteSQLQuery, idToDelete, (err, rows) => {
+        if (err) {
+            res.status(500);
+            res.json({
+                status: 'failure',
+                message: err
+            });
+        } else {
+            res.status(200);
+            res.json({
+                status: 'success',
+                message: `User credentials successfully deleted`,
+            });
+        }
+
+    })
+}
