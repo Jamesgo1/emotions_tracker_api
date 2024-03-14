@@ -95,7 +95,7 @@ exports.getLoginAttempts = (req, res) => {
     const getFields = [user_id];
 
     // Change this number for customised failure threshold
-    const failureThreshold = 5;
+    const failureThreshold = 3;
 
     const failedLoginAttemptsSQL = `
         SELECT
